@@ -316,13 +316,16 @@ jvmtiError enable_capabilities(jvmtiEnv *jvmti) {
     jvmtiCapabilities capabilities;
 
     memset(&capabilities,0, sizeof(capabilities));
+    capabilities.can_generate_compiled_method_load_events = 1;
+    capabilities.can_get_line_numbers                = 1;
+    capabilities.can_get_source_file_name            = 1;
+
+/*
+    //deleted: oprofile does not touch these caps
     capabilities.can_generate_all_class_hook_events  = 1;
     capabilities.can_tag_objects                     = 1;
     capabilities.can_generate_object_free_events     = 1;
-    capabilities.can_get_source_file_name            = 1;
-    capabilities.can_get_line_numbers                = 1;
-    capabilities.can_generate_vm_object_alloc_events = 1;
-    capabilities.can_generate_compiled_method_load_events = 1;
+    capabilities.can_generate_vm_object_alloc_events = 1;*/
 
     // Request these capabilities for this JVM TI environment.
     return (*jvmti)->AddCapabilities(jvmti, &capabilities);
@@ -333,27 +336,31 @@ jvmtiError set_callbacks(jvmtiEnv *jvmti) {
 
     memset(&callbacks, 0, sizeof(callbacks));
     callbacks.CompiledMethodLoad  = &cbCompiledMethodLoad;
+    //no CompiledMethodUnload..
     callbacks.DynamicCodeGenerated = &cbDynamicCodeGenerated;
     return (*jvmti)->SetEventCallbacks(jvmti, &callbacks, (jint)sizeof(callbacks));
 }
 
 JNIEXPORT jint JNICALL
 Agent_OnAttach(JavaVM *vm, char *options, void *reserved) {
+
     open_map_file();
 
-    unfold_simple = strstr(options, "unfoldsimple") != NULL;
-    unfold_all = strstr(options, "unfoldall") != NULL;
-    unfold_inlined_methods = strstr(options, "unfold") != NULL || unfold_simple || unfold_all;
-    print_method_signatures = strstr(options, "msig") != NULL;
-    print_source_loc = strstr(options, "sourcepos") != NULL;
-    dotted_class_names = strstr(options, "dottedclass") != NULL;
-    clean_class_names = strstr(options, "cleanclass") != NULL;
-    annotate_java_frames = strstr(options, "annotate_java_frames") != NULL;
+    if (options != NULL) {
+        unfold_simple = strstr(options, "unfoldsimple") != NULL;
+        unfold_all = strstr(options, "unfoldall") != NULL;
+        unfold_inlined_methods = strstr(options, "unfold") != NULL || unfold_simple || unfold_all;
+        print_method_signatures = strstr(options, "msig") != NULL;
+        print_source_loc = strstr(options, "sourcepos") != NULL;
+        dotted_class_names = strstr(options, "dottedclass") != NULL;
+        clean_class_names = strstr(options, "cleanclass") != NULL;
+        annotate_java_frames = strstr(options, "annotate_java_frames") != NULL;
 
-    bool use_semicolon_unfold_delimiter = strstr(options, "use_semicolon_unfold_delimiter") != NULL;
-    unfold_delimiter = use_semicolon_unfold_delimiter ? ";" : "->";
+        bool use_semicolon_unfold_delimiter = strstr(options, "use_semicolon_unfold_delimiter") != NULL;
+        unfold_delimiter = use_semicolon_unfold_delimiter ? ";" : "->";
 
-    debug_dump_unfold_entries = strstr(options, "debug_dump_unfold_entries") != NULL;
+        debug_dump_unfold_entries = strstr(options, "debug_dump_unfold_entries") != NULL;
+    }
 
     jvmtiEnv *jvmti;
     (*vm)->GetEnv(vm, (void **)&jvmti, JVMTI_VERSION_1);
@@ -366,5 +373,36 @@ Agent_OnAttach(JavaVM *vm, char *options, void *reserved) {
     close_map_file();
 
     return 0;
+}
+
+
+JNIEXPORT jint JNICALL
+Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
+    jvmtiEnv *jvmti = NULL;
+
+    open_map_file();
+
+    if (options != NULL) {
+        unfold_simple = strstr(options, "unfoldsimple") != NULL;
+        unfold_all = strstr(options, "unfoldall") != NULL;
+        unfold_inlined_methods = strstr(options, "unfold") != NULL || unfold_simple || unfold_all;
+        print_method_signatures = strstr(options, "msig") != NULL;
+        print_source_loc = strstr(options, "sourcepos") != NULL;
+        clean_class_names = strstr(options, "dottedclass") != NULL;
+        debug_dump_unfold_entries = strstr(options, "debug_dump_unfold_entries") != NULL;
+    }
+
+    (*vm)->GetEnv(vm, (void **)&jvmti, JVMTI_VERSION_1);
+    enable_capabilities(jvmti);
+    set_callbacks(jvmti);
+    set_notification_mode(jvmti, JVMTI_ENABLE);
+
+    return 0;
+}
+
+JNIEXPORT void JNICALL Agent_OnUnload(JavaVM * vm)
+{
+    sleep(1); //workaround: avoids a race (fopen and fclose?) when we launch a very short JVM process
+    close_map_file();
 }
 
